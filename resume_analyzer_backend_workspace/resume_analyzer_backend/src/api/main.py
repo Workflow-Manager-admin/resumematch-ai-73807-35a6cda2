@@ -32,11 +32,24 @@ app = FastAPI(
     openapi_tags=openapi_tags
 )
 
+# CORS setup for frontend integration:
+# These origins should match deployed frontend(s)
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://127.0.0.1:3000",
+    "https://beta.kavia.ai",
+    "https://vscode-internal-5713-beta.beta01.cloud.kavia.ai:3000",
+    # Add any other deployed frontend URLs as needed
+]
+# If you deploy somewhere else, add the domain (or wildcard for dev) here.
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 

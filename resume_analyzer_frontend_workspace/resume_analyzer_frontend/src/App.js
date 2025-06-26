@@ -67,7 +67,23 @@ function App() {
   }
 
   // PUBLIC_INTERFACE
-  // Handles form submission and upload via POST to backend
+  // Handles form submission and upload via POST to backend.
+  /**
+   * Submission handler for resume and job description.
+   * 
+   * BACKEND ENDPOINT & CORS DEVELOPER TROUBLESHOOTING NOTES:
+   * - The backend endpoint is set by REACT_APP_BACKEND_URL or defaults to http://localhost:3001/analyze-resume/.
+   * - CORS/network errors (manifest as "Failed to fetch" or generic network errors) are commonly due to:
+   *     - Backend not running (check backend logs/container status).
+   *     - Backend running on a different port or address (adjust URL accordingly).
+   *     - CORS: Browser blocked request because backend does not allow frontend's origin.
+   *         - See FastAPI's CORSMiddleware (backend/src/api/main.py); adjust `allow_origins` if restricting origins.
+   *         - If using reverse proxy or deployed URLs, set React .env or deployment environment variable appropriately.
+   * - In the browser dev tools' console/network, look for:
+   *     - CORS policy errors in Console tab
+   *     - Network 0 status or no response in Network tab
+   * - For local/dev, both ports 3000 (frontend) and 3001 (backend) must be accessible from browser.
+   */
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -88,35 +104,76 @@ function App() {
       formData.append("file", file, file.name);
       formData.append("job_description", jobDescription);
 
-      // The backend is expected at /analyze-resume/; adjust this if deployed behind a proxy.
-      const response = await fetch(
-        "http://localhost:3001/analyze-resume/",
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      // Dynamically set backend URL based on environment for seamless container dev/deploy
+      const BACKEND_URL =
+        process.env.REACT_APP_BACKEND_URL ||
+        "http://localhost:3001/analyze-resume/";
+
+      let response;
+      try {
+        response = await fetch(
+          BACKEND_URL,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+      } catch (networkError) {
+        setLoading(false);
+        setResult(null);
+        // Likely CORS, server-down, or URL problem
+        setError(
+          "Network error: Could not reach backend API. " +
+          "This may be due to a CORS issue, server is down, or URL mismatch. " +
+          "Console may have more details. If running locally, ensure both frontend (port 3000) and backend (port 3001) are running and accessible."
+        );
+        // For CORS troubleshooting, log detailed info
+        // eslint-disable-next-line no-console
+        console.error("Network or CORS error when trying to reach backend at:", BACKEND_URL, networkError);
+        return;
+      }
 
       if (!response.ok) {
-        // Try to extract details from JSON
+        // Try to extract details from JSON, if possible
         let errDetail = "API request failed";
         try {
           const { detail } = await response.json();
           errDetail = detail || errDetail;
-        } catch {
-          // Ignore, use generic
+        } catch (err2) {
+          // Response is probably not JSON (e.g. CORS preflight block returns empty)
+          errDetail = "API request failed: Server returned " + response.status + " (" + response.statusText + ").";
         }
-        throw new Error(errDetail);
+        setResult(null);
+        setError(
+          errDetail +
+          (response.status === 0
+            ? " [CORS or server issue suspected. Check browser network tab and backend status.]"
+            : "")
+        );
+        // eslint-disable-next-line no-console
+        console.error("Non-2xx response from backend:", response.status, response.statusText, errDetail);
+        return;
       }
 
-      const json = await response.json();
-      setResult(json);
+      try {
+        const json = await response.json();
+        setResult(json);
+      } catch (parseError) {
+        setResult(null);
+        setError(
+          "Received invalid JSON from backend. There may be a server issue."
+        );
+        // eslint-disable-next-line no-console
+        console.error("Could not parse backend JSON:", parseError);
+      }
     } catch (err) {
       setResult(null);
       setError(
-        err?.message ||
+        (err && err.message) ||
           "Failed to submit. Please check your connection and input."
       );
+      // eslint-disable-next-line no-console
+      console.error("Unexpected error in submission handler:", err);
     } finally {
       setLoading(false);
     }

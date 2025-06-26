@@ -149,34 +149,109 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 # PUBLIC_INTERFACE
 def perform_compatibility_analysis(resume_text: str, job_description: str) -> dict:
     """
-    Placeholder for the AI-powered compatibility analysis.
+    PUBLIC_INTERFACE
+    Performs compatibility analysis by sending the resume and job description to SambaNova API.
 
-    In production, this function would call the SambaNova LLaMA-4 Maverick 17B API
-    with the resume and job description, and parse the API's response.
+    Calls the SambaNova API v1 endpoint using the preferred model and payload schema,
+    handles errors, and parses the response into dict with the expected fields.
 
-    For now, it returns a dummy score with mock summary/details.
+    Args:
+        resume_text (str): Extracted text from the user's PDF resume.
+        job_description (str): Job description string text.
 
     Returns (dict):
-        - score (float)
-        - summary (str)
-        - details (str)
+        - score (float): Compatibility score (0-1)
+        - summary (str): Human-readable summary
+        - details (str): More detailed information
+
+    Raises:
+        RuntimeError: If the API call fails or produces an invalid response.
     """
-    # TODO: Replace with actual API call to SambaNova when available.
-    import random
-    fake_score = round(random.uniform(0.35, 0.95), 2)
-    fake_summary = (
-        "This is a simulated compatibility result between the resume and the job description. "
-        "The real implementation will use SambaNova LLaMA-4 Maverick 17B for deep analysis."
-    )
-    fake_details = (
-        f"Score is {fake_score}. This is a demo. Key skills are matched heuristically. "
-        "Integration point for real LLM model."
-    )
-    return {
-        "score": fake_score,
-        "summary": fake_summary,
-        "details": fake_details
+    import os
+    import httpx
+
+    # Securely load the SambaNova API Key from environment or .env (set up in deployment)
+    sambanova_api_key = os.getenv("SAMBANOVA_API_KEY")
+    if not sambanova_api_key:
+        # Try .env (if python-dotenv is installed)
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            sambanova_api_key = os.getenv("SAMBANOVA_API_KEY")
+        except Exception:
+            sambanova_api_key = None
+    if not sambanova_api_key:
+        raise RuntimeError("SambaNova API key is not configured. Set SAMBANOVA_API_KEY in environment or .env.")
+
+    endpoint = "https://api.sambanova.ai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {sambanova_api_key}",
+        "Content-Type": "application/json"
     }
+    # Build prompt/messages as expected by the API
+    prompt_messages = [
+        {
+            "role": "system", 
+            "content": (
+                "You are a helpful assistant for resume-job matching. "
+                "You will receive a resume and a job description; "
+                "analyze their compatibility and reply with: "
+                "a JSON object containing a compatibility score (float 0-1), "
+                "a brief summary, and detailed findings. "
+                "Only reply with the JSON object."
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Resume:\n{resume_text}\n\nJob Description:\n{job_description}\n\n"
+                "Reply strictly in JSON as: {\"score\": <0-1>, \"summary\": \"...\", \"details\": \"...\"}."
+            )
+        }
+    ]
+    payload = {
+        "stream": False,
+        "model": "Meta-Llama-3.3-70B-Instruct",
+        "messages": prompt_messages,
+    }
+
+    try:
+        with httpx.Client(timeout=45.0) as client:
+            resp = client.post(endpoint, headers=headers, json=payload)
+        resp.raise_for_status()
+        # SambaNova returns a "choices" list similar to OpenAI; parse accordingly.
+        data = resp.json()
+        if not data or "choices" not in data or not data["choices"]:
+            raise RuntimeError(f"Unexpected SambaNova API response: {data}")
+
+        # The format is expected to be in data["choices"][0]["message"]["content"]
+        message_content = data["choices"][0]["message"]["content"]
+        # The actual model output should be a JSON string as prompted.
+        import json as pyjson
+        try:
+            analysis_result = pyjson.loads(message_content)
+        except Exception as json_error:
+            # If response is not a valid JSON object, provide diagnostic details.
+            raise RuntimeError(f"SambaNova model did not return valid JSON: {message_content}") from json_error
+
+        # Validate required fields
+        score = analysis_result.get("score")
+        summary = analysis_result.get("summary")
+        details = analysis_result.get("details")
+        if not isinstance(score, (float, int)) or summary is None:
+            raise RuntimeError("Missing or invalid fields in SambaNova result: " + str(analysis_result))
+
+        # Score normalization (ensure 0..1)
+        score = max(0.0, min(1.0, float(score)))
+        return {
+            "score": score,
+            "summary": str(summary),
+            "details": str(details) if details is not None else "",
+        }
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"SambaNova API HTTP error: {str(e)} - {getattr(e.response, 'text', '')}")
+    except Exception as e:
+        raise RuntimeError(f"SambaNova API integration error: {str(e)}")
 
 
 @app.exception_handler(HTTPException)

@@ -1,0 +1,4 @@
+{
+    "command": "source venv/bin/activate && pip install -r requirements.txt",
+    "working_directory": "/home/kavia/workspace/code-generation/resumematch-ai-73807-35a6cda2/resume_analyzer_backend_workspace/resume_analyzer_backend"
+}
